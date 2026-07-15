@@ -1,0 +1,15 @@
+.venv
+venv/
+.claude/
+__pycache__/
+SPEC.md
+
+# Runtime SQLite DB holds real (de-tokenized) PII values — never commit it.
+*.db
+*.db-journal
+data/
+
+# Local env overrides
+.env
+
+SPEC.md

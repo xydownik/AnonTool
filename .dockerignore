@@ -1,0 +1,13 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+.claude/
+*.db
+*.db-journal
+data/
+SPEC.md
+.gitignore
+.dockerignore
+docker-compose.yml

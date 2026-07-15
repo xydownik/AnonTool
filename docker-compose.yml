@@ -1,0 +1,13 @@
+services:
+  anontool:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - ANON_DB_PATH=/app/data/anon_mapping.db
+    volumes:
+      - anon_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  anon_data:
