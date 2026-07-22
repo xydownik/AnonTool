@@ -84,6 +84,45 @@ class AnonymizerSession:
             self.mapping_records.append((token, value, entity_type))
         return token
 
+    def _drop_spacy_pos_false_positives(
+        self, results: List[RecognizerResult], text: str
+    ) -> List[RecognizerResult]:
+        """Drop PERSON/LOCATION hits from spaCy's NER that aren't proper
+        nouns (POS tag PROPN).
+
+        spaCy's ru_core_news_lg NER occasionally mistags an arbitrary
+        capitalized word (sentence-initial, table header, defined term) as
+        PERSON/LOCATION — e.g. "Товар Поставлен" or "Программой". A real
+        name/place is tagged PROPN by the same pipeline's POS tagger, so any
+        hit containing a non-PROPN word is almost certainly noise. Only
+        applies to results actually produced by SpacyRecognizer — our own
+        regex-based PERSON (signature names) and LOCATION (street address)
+        recognizers are deterministic and left untouched. ORGANIZATION is
+        excluded too: legal company names routinely mix a NOUN legal form
+        ("ТОО") with foreign-script words tagged "X", so POS isn't a
+        reliable signal there.
+        """
+        spacy_nlp = getattr(self.engine.nlp_engine, "nlp", None)
+        spacy_nlp = spacy_nlp.get(self.language) if spacy_nlp else None
+        if spacy_nlp is None:
+            return results
+
+        doc = None
+        filtered = []
+        for r in results:
+            if r.entity_type in ("PERSON", "LOCATION") and (
+                r.recognition_metadata or {}
+            ).get("recognizer_name") == "SpacyRecognizer":
+                if doc is None:
+                    doc = spacy_nlp(text)
+                span = doc.char_span(r.start, r.end, alignment_mode="expand")
+                if span is not None and not all(
+                    t.pos_ in ("PROPN", "PUNCT") for t in span
+                ):
+                    continue
+            filtered.append(r)
+        return filtered
+
     def analyze_paragraph(self, text: str) -> List[Tuple[int, int, str]]:
         """Detect entities in `text` and return (start, end, token) matches
         (offsets relative to `text`, sorted ascending, non-overlapping).
@@ -104,6 +143,7 @@ class AnonymizerSession:
                 and is_legal_boilerplate(text[r.start : r.end])
             )
         ]
+        raw_results = self._drop_spacy_pos_false_positives(raw_results, text)
         results = _resolve_overlaps(raw_results)
         matches = []
         for r in results:
