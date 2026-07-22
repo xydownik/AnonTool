@@ -88,12 +88,36 @@ DOCUMENT_ID_PATTERN = Pattern(
     score=0.55,
 )
 
+_KZ_CYR_UPPER = "А-ЯЁӘҒҚҢӨҰҮІҺ"
+_KZ_CYR_LOWER = "а-яёәғқңөұүіһ"
+
+# Street-level addresses, e.g. "ул. Абая 150", "проспект Достык, д. 34, кв. 12",
+# "мкр. Самал-2, д. 5". spaCy's ru_core_news_lg NER reliably catches city
+# names but routinely misses these entirely, so a deterministic pattern
+# fills the gap. Requires a street-type keyword (RU or KZ) followed by a
+# capitalized name and a house number, to keep false positives low.
+_STREET_TYPE = (
+    r"(?:ул\.?|улица|пр\.?|пр-т|проспект|мкр\.?|микрорайон|мкрн\.?|"
+    r"пер\.?|переулок|б-р|бульвар|ш\.?|шоссе|наб\.?|набережная|тупик|аллея|"
+    r"көшесі|көше|даңғылы|даңғыл)"
+)
+_STREET_NAME = (
+    rf"[{_KZ_CYR_UPPER}A-Z][\w\-\.]*(?:\s+[{_KZ_CYR_UPPER}A-Z][\w\-\.]*){{0,3}}"
+)
+_HOUSE_NUMBER = (
+    r"(?:д\.?|дом|үй)?\s*№?\s*\d{1,4}[А-Яа-яЁёA-Za-z]?(?:/\d+)?"
+    r"(?:,?\s*(?:кв\.?|квартира|оф\.?|офис)\s*№?\s*\d+)?"
+)
+STREET_ADDRESS_PATTERN = Pattern(
+    name="street_address_pattern",
+    regex=rf"\b{_STREET_TYPE}\s+{_STREET_NAME}\s*,?\s*{_HOUSE_NUMBER}\b",
+    score=0.85,
+)
+
 # Signature-line names in RU/KZ official documents, e.g. "Төлеміс А.Ә.",
 # "Иванов И.И.", or the reverse order "Д.Х. Қалекес", "И.И. Иванов". NER
 # models (especially the small Kazakh transformer) routinely miss these
 # abbreviated-initials formats, so a deterministic pattern catches them.
-_KZ_CYR_UPPER = "А-ЯЁӘҒҚҢӨҰҮІҺ"
-_KZ_CYR_LOWER = "а-яёәғқңөұүіһ"
 SIGNATURE_NAME_SURNAME_FIRST_PATTERN = Pattern(
     name="signature_name_surname_first_pattern",
     regex=rf"\b[{_KZ_CYR_UPPER}][{_KZ_CYR_LOWER}]+\s+[{_KZ_CYR_UPPER}]\.\s?[{_KZ_CYR_UPPER}]\.",
@@ -109,6 +133,45 @@ SIGNATURE_NAME_INITIALS_FIRST_PATTERN = Pattern(
     regex=rf"\b[{_KZ_CYR_UPPER}]\.\s?[{_KZ_CYR_UPPER}]\.\s+[{_KZ_CYR_UPPER}][{_KZ_CYR_LOWER}]+\b",
     score=0.99,
 )
+
+
+# ---------------------------------------------------------------------------
+# RU legal/contract boilerplate filter
+# ---------------------------------------------------------------------------
+
+# Generic RU contract/legal words that spaCy's ru_core_news_lg NER routinely
+# mistags as PERSON/ORGANIZATION/LOCATION because they're capitalized
+# (sentence-initial, or a defined term in quotes like «Заказчик»). None of
+# these are identifying on their own, so any NER hit starting with one of
+# these stems is dropped rather than anonymized.
+_LEGAL_BOILERPLATE_STEMS = (
+    "устав", "заказчик", "исполнител", "сторон", "заявк", "приказ",
+    "закон", "кодекс", "услуг", "министр", "договор", "приложен",
+    "постановлени", "положени", "правил",
+)
+
+# The bare country name ("Республика/и Казахстан", "РК") is not identifying
+# on its own and shows up constantly in law/order citations tagged as
+# LOCATION. Matched as a whole span (not a stem prefix) so it doesn't
+# accidentally swallow a real street address that happens to include it.
+_COUNTRY_REFERENCE_PATTERN = re.compile(
+    r"^(?:республик[а-яё]*\s+казахстан|рк)$", re.IGNORECASE
+)
+
+
+def is_legal_boilerplate(value: str) -> bool:
+    """True if `value` looks like RU legal/contract boilerplate (a defined
+    term, a law/order/code reference, a ministry title, or the bare country
+    name) rather than an actual PERSON/ORGANIZATION/LOCATION entity.
+    """
+    stripped = value.strip()
+    if _COUNTRY_REFERENCE_PATTERN.match(stripped):
+        return True
+    first_word = re.match(r"[^\W\d_]+", stripped, flags=re.UNICODE)
+    if not first_word:
+        return False
+    lowered = first_word.group(0).lower()
+    return any(lowered.startswith(stem) for stem in _LEGAL_BOILERPLATE_STEMS)
 
 
 def build_regex_recognizers(language: str) -> List[PatternRecognizer]:
@@ -141,6 +204,13 @@ def build_regex_recognizers(language: str) -> List[PatternRecognizer]:
             patterns=[DOCUMENT_ID_PATTERN],
             supported_language=language,
             context=["паспорт", "удостоверение", "№", "куәлік"],
+        ),
+        PatternRecognizer(
+            supported_entity="LOCATION",
+            patterns=[STREET_ADDRESS_PATTERN],
+            supported_language=language,
+            context=["адрес", "проживает", "находится", "мекенжай", "юридический адрес"],
+            global_regex_flags=re.DOTALL | re.MULTILINE,
         ),
         PatternRecognizer(
             supported_entity="PERSON",

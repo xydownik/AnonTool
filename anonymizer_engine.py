@@ -16,8 +16,8 @@ from typing import Dict, List, Tuple
 
 from presidio_analyzer import AnalyzerEngine, RecognizerResult
 
-from entities import ENTITY_LABELS, REGEX_ENTITY_TYPES
-from recognizers import build_analyzer_engine
+from entities import ENTITY_LABELS, NER_ENTITY_TYPES, REGEX_ENTITY_TYPES
+from recognizers import build_analyzer_engine, is_legal_boilerplate
 
 LANGUAGE_LABELS = {"ru": "Русский", "kk": "Қазақша"}
 
@@ -96,6 +96,14 @@ class AnonymizerSession:
         except Exception as exc:  # model inference failure shouldn't crash the whole doc
             raise RuntimeError(f"Ошибка анализа текста NLP-движком: {exc}") from exc
 
+        raw_results = [
+            r
+            for r in raw_results
+            if not (
+                r.entity_type in NER_ENTITY_TYPES
+                and is_legal_boilerplate(text[r.start : r.end])
+            )
+        ]
         results = _resolve_overlaps(raw_results)
         matches = []
         for r in results:
